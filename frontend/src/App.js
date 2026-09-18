@@ -1,55 +1,308 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
 import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import { motion } from "framer-motion";
+import {
+  ArrowRightLeft,
+  ShieldCheck,
+  Zap,
+  Fuel,
+  Layers,
+  Send,
+  Wallet,
+  QrCode,
+  CheckCircle2,
+  Bot,
+  Copy,
+  Check,
+} from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    // The marker attribute below lets the platform probe detect the stock splash — remove it with this page
-    <div data-emergent-splash>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
+const fade = {
+  hidden: { opacity: 0, y: 24 },
+  show: (i = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.08, duration: 0.5, ease: [0.22, 1, 0.36, 1] },
+  }),
 };
 
 function App() {
+  const [bot, setBot] = useState({ username: null, link: null, name: null });
+  const [stats, setStats] = useState({ total_swaps: 0, completed: 0 });
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    axios.get(`${API}/bot-info`).then((r) => setBot(r.data)).catch(() => {});
+    axios.get(`${API}/stats`).then((r) => setStats(r.data)).catch(() => {});
+  }, []);
+
+  const botLink = bot.link || "https://t.me";
+  const botHandle = bot.username ? `@${bot.username}` : "@your_bot";
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=1&bgcolor=0C1017&color=FFFFFF&data=${encodeURIComponent(
+    botLink
+  )}`;
+
+  const copyHandle = () => {
+    navigator.clipboard.writeText(botLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+
+  const steps = [
+    {
+      icon: Send,
+      title: "Open the bot & tap Start a swap",
+      body: "Or just type a swap in plain English, e.g. \"swap 5 USDC on base to USDT on bsc\".",
+    },
+    {
+      icon: QrCode,
+      title: "Get a fresh deposit address",
+      body: "A brand-new, single-use deposit address + QR is generated for every swap.",
+    },
+    {
+      icon: Wallet,
+      title: "Send your coins",
+      body: "Send from any wallet on the source chain. The bot detects the deposit automatically.",
+    },
+    {
+      icon: CheckCircle2,
+      title: "Receive on the destination chain",
+      body: "Funds are auto-swapped and delivered to your address on the chain you chose.",
+    },
+  ];
+
+  const features = [
+    {
+      icon: ShieldCheck,
+      title: "Privacy by default",
+      body: "A new deposit address every time means your wallets are never reused or linked on-chain.",
+      color: "#10B981",
+    },
+    {
+      icon: Fuel,
+      title: "Best available route",
+      body: "Powered by NEAR Intents, each swap is routed through deep cross-chain liquidity.",
+      color: "#38BDF8",
+    },
+    {
+      icon: Zap,
+      title: "Auto & fast",
+      body: "Deposits are detected automatically and settlement typically completes in about a minute.",
+      color: "#F59E0B",
+    },
+    {
+      icon: Layers,
+      title: "Non-custodial routing",
+      body: "Funds flow through bridge liquidity — no direct A→B trail between your wallets.",
+      color: "#7D52F4",
+    },
+  ];
+
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+    <div className="page" data-testid="landing-page">
+      <div className="glow glow-base" />
+      <div className="glow glow-star" />
+
+      {/* NAV */}
+      <nav className="nav">
+        <div className="brand">
+          <span className="brand-mark">
+            <ArrowRightLeft size={18} strokeWidth={2.5} />
+          </span>
+          <span className="brand-name">CipherSwap</span>
+        </div>
+        <a
+          href={botLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="nav-cta"
+          data-testid="nav-open-telegram"
+        >
+          <Send size={15} /> Open Bot
+        </a>
+      </nav>
+
+      {/* HERO */}
+      <header className="hero">
+        <motion.div className="hero-left" initial="hidden" animate="show">
+          <motion.div variants={fade} custom={0} className="pill-row">
+            <span className="pill pill-base">35 Networks</span>
+            <ArrowRightLeft size={13} className="pill-arrow" />
+            <span className="pill pill-star">196 Assets</span>
+          </motion.div>
+
+          <motion.h1 variants={fade} custom={1} className="hero-title">
+            Swap <span className="c-usdc">any coin</span>,
+            <br />
+            across <span className="c-star">any chain</span>.
+            <br />
+            Privately.
+          </motion.h1>
+
+          <motion.p variants={fade} custom={2} className="hero-sub">
+            A privacy-first Telegram bot for cross-chain swaps across 35 networks. Just
+            type <em>"swap 5 USDC on base to USDT on bsc"</em> — with fresh addresses,
+            amount-blending, splitting and zero-trace mode built in.
+          </motion.p>
+
+          <motion.div variants={fade} custom={3} className="hero-actions">
+            <a
+              href={botLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary"
+              data-testid="hero-open-telegram"
+            >
+              <Send size={17} /> Launch on Telegram
+            </a>
+            <button className="btn-ghost" onClick={copyHandle} data-testid="copy-bot-link">
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+              {copied ? "Copied!" : botHandle}
+            </button>
+          </motion.div>
+
+          <motion.div variants={fade} custom={4} className="stat-row">
+            <div className="stat">
+              <div className="stat-num">{stats.total_swaps}</div>
+              <div className="stat-label">Swaps Started</div>
+            </div>
+            <div className="stat-div" />
+            <div className="stat">
+              <div className="stat-num">~40s</div>
+              <div className="stat-label">Avg Settlement</div>
+            </div>
+            <div className="stat-div" />
+            <div className="stat">
+              <div className="stat-num">100%</div>
+              <div className="stat-label">Gasless Receive</div>
+            </div>
+          </motion.div>
+        </motion.div>
+
+        <motion.div
+          className="hero-right"
+          initial={{ opacity: 0, scale: 0.94 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <div className="qr-card" data-testid="bot-qr-card">
+            <div className="qr-card-top">
+              <span className="qr-live">
+                <span className="live-dot" /> Bot Online
+              </span>
+              <Bot size={18} className="qr-bot-icon" />
+            </div>
+            <div className="qr-wrap">
+              <img src={qrSrc} alt="Scan to open bot" className="qr-img" />
+            </div>
+            <div className="qr-handle">{botHandle}</div>
+            <div className="qr-hint">Scan with your phone to start bridging</div>
+            <a
+              href={botLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="qr-btn"
+              data-testid="qr-open-telegram"
+            >
+              <Send size={15} /> Open in Telegram
+            </a>
+          </div>
+        </motion.div>
+      </header>
+
+      {/* HOW IT WORKS */}
+      <section className="section">
+        <div className="section-head">
+          <span className="eyebrow">How it works</span>
+          <h2 className="section-title">Four taps to a cross-chain transfer</h2>
+        </div>
+        <div className="steps-grid">
+          {steps.map((s, i) => (
+            <motion.div
+              key={s.title}
+              className="step-card"
+              custom={i}
+              variants={fade}
+              initial="hidden"
+              whileInView="show"
+              viewport={{ once: true, margin: "-60px" }}
+              data-testid={`step-card-${i}`}
+            >
+              <div className="step-index">{String(i + 1).padStart(2, "0")}</div>
+              <div className="step-icon">
+                <s.icon size={20} strokeWidth={2} />
+              </div>
+              <h3 className="step-title">{s.title}</h3>
+              <p className="step-body">{s.body}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* FEATURES */}
+      <section className="section">
+        <div className="section-head">
+          <span className="eyebrow">Why CipherSwap</span>
+          <h2 className="section-title">Built for privacy and low fees</h2>
+        </div>
+        <div className="feat-grid">
+          {features.map((f, i) => (
+            <motion.div
+              key={f.title}
+              className="feat-card"
+              custom={i}
+              variants={fade}
+              initial="hidden"
+              whileInView="show"
+              viewport={{ once: true, margin: "-60px" }}
+              data-testid={`feature-card-${i}`}
+            >
+              <div className="feat-icon" style={{ color: f.color, background: `${f.color}18` }}>
+                <f.icon size={22} strokeWidth={2} />
+              </div>
+              <h3 className="feat-title">{f.title}</h3>
+              <p className="feat-body">{f.body}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* PRIVACY NOTE */}
+      <section className="privacy-band" data-testid="privacy-band">
+        <ShieldCheck size={28} className="pb-icon" />
+        <div>
+          <h3 className="pb-title">Honest about privacy</h3>
+          <p className="pb-body">
+            Fresh addresses and bridge routing give you strong on-chain hygiene, but no
+            bridge can make transactions 100% untraceable. For maximum privacy, use a new
+            destination address per swap and wipe your data any time with{" "}
+            <code>/forget</code>.
+          </p>
+        </div>
+      </section>
+
+      {/* FINAL CTA */}
+      <section className="final-cta">
+        <h2 className="final-title">Ready to swap?</h2>
+        <p className="final-sub">Open the bot and tap <code>Start a swap</code> to begin.</p>
+        <a
+          href={botLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary btn-lg"
+          data-testid="final-open-telegram"
+        >
+          <Send size={18} /> Launch {botHandle}
+        </a>
+      </section>
+
+      <footer className="footer">
+        <span>CipherSwap · Any coin, any chain</span>
+        <span className="footer-muted">Powered by NEAR Intents · Non-custodial</span>
+      </footer>
     </div>
   );
 }

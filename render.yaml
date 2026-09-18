@@ -1,0 +1,38 @@
+# Render Blueprint for the CipherSwap backend (FastAPI + Telegram bot).
+# Deploy via "New +" -> "Blueprint" and point Render at this repo, OR configure a
+# Web Service manually with the same settings (see DEPLOYMENT.md).
+#
+# IMPORTANT: keep numInstances at 1. The Telegram bot keeps conversation state in
+# memory and runs in-process background workers; scaling out is guarded for
+# transaction safety but breaks the multi-step wizard UX.
+services:
+  - type: web
+    name: cipherswap-backend
+    runtime: python
+    rootDir: backend
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: NEAR_INTENTS_BASE
+        sync: false
+      - key: NEAR_INTENTS_JWT
+        sync: false
+      - key: WALLET_ENCRYPTION_KEY
+        sync: false
