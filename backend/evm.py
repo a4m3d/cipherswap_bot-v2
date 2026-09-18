@@ -4,6 +4,7 @@ Generates a fresh EVM wallet, watches its USDC/ERC20 balance, and dispatches ERC
 transfers to NEAR Intents deposit addresses. The private key is returned to the user
 for recovery so funds can never get permanently stuck.
 """
+import os
 from decimal import Decimal
 
 from eth_account import Account
@@ -137,4 +138,57 @@ def send_erc20(network, pk, token_addr, decimals, to_addr, amount_human) -> str:
     built = fn.build_transaction(tx)
     signed = acct.sign_transaction(built)
     h = w3.eth.send_raw_transaction(signed.raw_transaction)
+    return h.hex()
+
+
+# ---------------- Optional operator-funded gas reserve ("paymaster") ----------------
+# If GAS_RESERVE_PK is set, the backend can top up a one-time custodial wallet's
+# native gas from a single operator-funded EVM wallet so users never send gas.
+# The same address works across all EVM chains; the operator funds it per chain.
+# OFF by default: when unset, users pay their own gas (current behaviour).
+def has_reserve() -> bool:
+    return bool(os.environ.get("GAS_RESERVE_PK"))
+
+
+def reserve_address():
+    pk = os.environ.get("GAS_RESERVE_PK")
+    if not pk:
+        return None
+    return Account.from_key(pk).address
+
+
+def reserve_native_balance(network) -> Decimal:
+    addr = reserve_address()
+    if not addr:
+        return Decimal(0)
+    return native_balance(network, addr)
+
+
+def topup_gas(network, to_addr, amount_wei: int, wait: bool = True) -> str:
+    """Send native gas from the operator reserve to `to_addr`. Returns tx hash hex."""
+    pk = os.environ.get("GAS_RESERVE_PK")
+    if not pk:
+        raise RuntimeError("gas reserve not configured")
+    w3 = _w3(network)
+    acct = Account.from_key(pk)
+    to_addr = Web3.to_checksum_address(to_addr)
+    chain_id = EVM_NETWORKS[network]["chain_id"]
+    tx = {
+        "from": acct.address, "to": to_addr, "value": int(amount_wei),
+        "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
+        "chainId": chain_id, "gas": 21000,
+    }
+    try:
+        base_fee = w3.eth.get_block("latest").get("baseFeePerGas")
+    except Exception:
+        base_fee = None
+    if base_fee:
+        tx["maxPriorityFeePerGas"] = w3.to_wei(1, "gwei")
+        tx["maxFeePerGas"] = int(base_fee * 2 + tx["maxPriorityFeePerGas"])
+    else:
+        tx["gasPrice"] = w3.eth.gas_price
+    signed = acct.sign_transaction(tx)
+    h = w3.eth.send_raw_transaction(signed.raw_transaction)
+    if wait:
+        w3.eth.wait_for_transaction_receipt(h, timeout=120)
     return h.hex()

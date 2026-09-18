@@ -36,3 +36,5 @@ services:
         sync: false
       - key: WALLET_ENCRYPTION_KEY
         sync: false
+      - key: GAS_RESERVE_PK
+        sync: false

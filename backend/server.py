@@ -289,6 +289,17 @@ async def web_coins(network: str):
     ]}
 
 
+@api_router.get("/web/resolve-ca")
+async def web_resolve_ca(network: str, address: str):
+    await _load_catalog()
+    t = near.catalog.find_by_ca(network, address)
+    if not t:
+        raise HTTPException(status_code=404, detail="No swappable token found for that contract address on this network")
+    return {"symbol": t.get("symbol"), "assetId": t.get("assetId"),
+            "decimals": t.get("decimals"), "contractAddress": t.get("contractAddress"),
+            "price": t.get("price"), "network": network}
+
+
 @api_router.post("/web/quote")
 async def web_quote(req: WebQuoteRequest):
     await _load_catalog()
@@ -353,7 +364,7 @@ async def web_swap_status(sid: str):
     status = doc.get("status", "PENDING_DEPOSIT")
     now = datetime.now(timezone.utc)
     checked = _parse_iso(doc.get("status_checked_at"))
-    fresh = bool(checked and (now - checked).total_seconds() < 12)
+    fresh = bool(checked and (now - checked).total_seconds() < 5)
     if status not in TERMINAL_STATUSES and not fresh:
         try:
             res = await near.get_status(doc["deposit_address"], doc.get("deposit_memo"))

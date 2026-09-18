@@ -90,6 +90,7 @@ The app binds `0.0.0.0` and uses Render's `$PORT`. `render.yaml` is included for
 | `NEAR_INTENTS_BASE` | No | Yes | `https://1click.chaindefuser.com` (default; you have no JWT / 1Click) |
 | `NEAR_INTENTS_JWT` | **Yes** (if used) | Yes | Leave empty — 1Click works without auth for you |
 | `WALLET_ENCRYPTION_KEY` | **Yes** | Yes | Generate: `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
+| `GAS_RESERVE_PK` | **Yes** | Yes | OPTIONAL paymaster. Operator-funded EVM wallet private key; if set, CipherSwap pays custodial gas for users (same address across all EVM chains — you fund it per chain). Unset = users pay their own gas. Holds real funds; guard carefully |
 | `PYTHON_VERSION` | No | Yes | `3.11.9` (optional; `runtime.txt` already pins it) |
 
 Do **not** put any of these in Git. `.env.example` lists names/placeholders only.

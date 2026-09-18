@@ -508,7 +508,8 @@ async def _goto(update, context, step, q=None):
     if step == "srccoin":
         coins = _CATALOG.coins_on(r["origin_net"])
         await _wiz(context, chat_id, _hdr(context, "Step 2/5 · Send coin",
-                   "🪙 Which coin are you *sending*?"), _coin_grid("usc", coins, "srcnet"), q)
+                   "🪙 Which coin are you *sending*?\n_Tip: paste a token contract address to pick any listed token._"),
+                   _coin_grid("usc", coins, "srcnet"), q)
         return US_SRC_COIN
     if step == "dstnet":
         await _wiz(context, chat_id, _hdr(context, "Step 3/5 · Destination network",
@@ -517,7 +518,8 @@ async def _goto(update, context, step, q=None):
     if step == "dstcoin":
         coins = _CATALOG.coins_on(r["dest_net"])
         await _wiz(context, chat_id, _hdr(context, "Step 4/5 · Receive coin",
-                   "🪙 Which coin do you want to *receive*?"), _coin_grid("udc", coins, "dstnet"), q)
+                   "🪙 Which coin do you want to *receive*?\n_Tip: paste a token contract address to pick any listed token._"),
+                   _coin_grid("udc", coins, "dstnet"), q)
         return US_DST_COIN
     if step == "amount":
         await _wiz(context, chat_id, *_step_amount(context), q=q)
@@ -560,6 +562,37 @@ async def cb_dst_coin(update, context):
     t = _CATALOG.find(sym, r["dest_net"])
     r.update({"dst_sym": sym, "dest_asset": t["assetId"]})
     return await _goto(update, context, "amount", q=q)
+
+
+async def us_src_coin_text(update, context):
+    """Accept a pasted contract address to select the source coin."""
+    ca = (update.message.text or "").strip()
+    r = context.user_data["route"]
+    t = _CATALOG.find_by_ca(r["origin_net"], ca)
+    if not t:
+        await _safe_reply(update,
+            f"⚠️ No swappable token with that contract address on *{net_name(r['origin_net'])}*. "
+            "Tap a coin above, or paste a valid listed contract address.",
+            parse_mode=ParseMode.MARKDOWN)
+        return US_SRC_COIN
+    r.update({"src_sym": t["symbol"], "origin_asset": t["assetId"], "origin_decimals": t["decimals"],
+              "origin_contract": t.get("contractAddress")})
+    return await _goto(update, context, "dstnet")
+
+
+async def us_dst_coin_text(update, context):
+    """Accept a pasted contract address to select the destination coin."""
+    ca = (update.message.text or "").strip()
+    r = context.user_data["route"]
+    t = _CATALOG.find_by_ca(r["dest_net"], ca)
+    if not t:
+        await _safe_reply(update,
+            f"⚠️ No swappable token with that contract address on *{net_name(r['dest_net'])}*. "
+            "Tap a coin above, or paste a valid listed contract address.",
+            parse_mode=ParseMode.MARKDOWN)
+        return US_DST_COIN
+    r.update({"dst_sym": t["symbol"], "dest_asset": t["assetId"]})
+    return await _goto(update, context, "amount")
 
 
 async def cb_nav(update, context):
@@ -960,12 +993,15 @@ async def _start_custodial(context, chat_id, route, amount, n, ephemeral):
     })
     link = _payment_link(route["origin_contract"], route["origin_net"], address, amount, route["origin_decimals"])
     sym = evm.NATIVE_SYMBOL.get(route["origin_net"], "native token")
-    try:
-        needed_wei = await asyncio.to_thread(evm.required_gas_wei, route["origin_net"], n)
-        needed_eth = Decimal(needed_wei) / Decimal(10 ** 18)
-        gas_line = f"➕ Also send *at least ~{needed_eth:.6f} {sym}* for gas so I can forward all {n} chunk(s)."
-    except Exception:
-        gas_line = "➕ Also send enough *native gas* to cover all chunk transfers."
+    if evm.has_reserve():
+        gas_line = "⛽ *Gas is on us* — just send the tokens, CipherSwap covers the network fee."
+    else:
+        try:
+            needed_wei = await asyncio.to_thread(evm.required_gas_wei, route["origin_net"], n)
+            needed_eth = Decimal(needed_wei) / Decimal(10 ** 18)
+            gas_line = f"➕ Also send *at least ~{needed_eth:.6f} {sym}* for gas so I can forward all {n} chunk(s)."
+        except Exception:
+            gas_line = "➕ Also send enough *native gas* to cover all chunk transfers."
     cap = (f"🧩 *Pay-once split (custodial)* — {n} chunks\n\n"
            f"Send *{amount} {route['src_sym']}* on *{net_name(route['origin_net'])}* to your one-time wallet:\n`{address}`\n\n"
            f"{gas_line}\n\n"
@@ -991,20 +1027,39 @@ async def _custodial_loop(app):
                     required_wei = await asyncio.to_thread(evm.required_gas_wei, net, len(j["chunks"]))
                     required_eth = Decimal(required_wei) / Decimal(10 ** 18)
                     sym = evm.NATIVE_SYMBOL.get(net, "native token")
-                    if bal < Decimal(j["total"]) or gas < required_eth:
+                    if bal < Decimal(j["total"]):
                         created = _parse_dt(j.get("created_at"))
                         if (created and (now - created).total_seconds() > 1800 and not j.get("reminded")):
                             await db.custodial.update_one({"_id": j["_id"]}, {"$set": {"reminded": True}})
-                            need = []
-                            if bal < Decimal(j["total"]):
-                                need.append(f"*{j['total']} {j['route']['src_sym']}*")
-                            if gas < required_eth:
-                                need.append(f"*at least ~{required_eth:.6f} {sym}* for gas (you sent {gas:.6f})")
                             await _safe_send(app.bot, j["chat_id"],
-                                f"⏳ Your pay-once wallet `{_short(j['address'])}` still needs {' + '.join(need)}.\n"
+                                f"⏳ Your pay-once wallet `{_short(j['address'])}` still needs *{j['total']} {j['route']['src_sym']}*.\n"
                                 "It stays valid — send when ready, or use your 🔑 recovery key to move funds anytime.",
                                 parse_mode=ParseMode.MARKDOWN)
                         continue
+                    if gas < required_eth:
+                        # Paymaster: if an operator gas reserve is configured, top up the
+                        # shortfall so the user never has to send native gas themselves.
+                        if evm.has_reserve() and evm.supported(net):
+                            try:
+                                shortfall_wei = required_wei - int((gas * Decimal(10 ** 18)).to_integral_value())
+                                shortfall_wei = int(shortfall_wei * 1.1)
+                                if shortfall_wei > 0:
+                                    await _safe_send(app.bot, j["chat_id"],
+                                        f"⛽ Covering gas for you from the CipherSwap gas reserve…")
+                                    await asyncio.to_thread(evm.topup_gas, net, j["address"], shortfall_wei)
+                                    gas = await asyncio.to_thread(evm.native_balance, net, j["address"])
+                            except Exception:
+                                logger.exception("gas reserve top-up failed")
+                        if gas < required_eth:
+                            created = _parse_dt(j.get("created_at"))
+                            if (created and (now - created).total_seconds() > 1800 and not j.get("reminded")):
+                                await db.custodial.update_one({"_id": j["_id"]}, {"$set": {"reminded": True}})
+                                await _safe_send(app.bot, j["chat_id"],
+                                    f"⏳ Your pay-once wallet `{_short(j['address'])}` still needs "
+                                    f"*at least ~{required_eth:.6f} {sym}* for gas (you sent {gas:.6f}).\n"
+                                    "It stays valid — send when ready, or use your 🔑 recovery key to move funds anytime.",
+                                    parse_mode=ParseMode.MARKDOWN)
+                            continue
                     claimed = await db.custodial.update_one(
                         {"_id": j["_id"], "dispatched": False}, {"$set": {"dispatched": True}})
                     if claimed.modified_count != 1:
@@ -1323,9 +1378,11 @@ def create_application(token, db, near: NearBridgeClient) -> Application:
         ],
         states={
             US_SRC_NET: [CallbackQueryHandler(cb_src_net, pattern="^usn:"), nav],
-            US_SRC_COIN: [CallbackQueryHandler(cb_src_coin, pattern="^usc:"), nav],
+            US_SRC_COIN: [CallbackQueryHandler(cb_src_coin, pattern="^usc:"), nav,
+                          MessageHandler(filters.TEXT & ~filters.COMMAND, us_src_coin_text)],
             US_DST_NET: [CallbackQueryHandler(cb_dst_net, pattern="^udn:"), nav],
-            US_DST_COIN: [CallbackQueryHandler(cb_dst_coin, pattern="^udc:"), nav],
+            US_DST_COIN: [CallbackQueryHandler(cb_dst_coin, pattern="^udc:"), nav,
+                          MessageHandler(filters.TEXT & ~filters.COMMAND, us_dst_coin_text)],
             US_AMOUNT: [CallbackQueryHandler(cb_amount, pattern="^amt:"),
                         CallbackQueryHandler(cb_blend, pattern="^bl:"), nav,
                         MessageHandler(filters.TEXT & ~filters.COMMAND, amount_text)],

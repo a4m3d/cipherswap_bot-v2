@@ -107,6 +107,18 @@ class Catalog:
         symu = symbol.upper()
         return [t for t in self._tokens if t.get("symbol", "").upper() == symu]
 
+    def find_by_ca(self, network, ca):
+        """Find a token on `network` by its contract address (case-insensitive)."""
+        target = (ca or "").strip().lower()
+        if not target:
+            return None
+        for t in self._tokens:
+            if str(t.get("blockchain", "")).lower() != network.lower():
+                continue
+            if str(t.get("contractAddress", "")).lower() == target:
+                return t
+        return None
+
     def price(self, symbol, network):
         t = self.find(symbol, network)
         return t.get("price") if t else None
