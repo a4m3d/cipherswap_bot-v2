@@ -31,10 +31,14 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
+from pydantic import BaseModel
+from decimal import Decimal
+import secrets
 
 from telegram import Update, BotCommand
 
-from near_client import NearBridgeClient
+from near_client import NearBridgeClient, TERMINAL_STATUSES, net_name
+from addr_validate import validate_address
 import bot as botmod
 
 logging.basicConfig(
@@ -72,6 +76,9 @@ async def _ensure_indexes():
         await db.custodial.create_index("dispatched")
         await db.custodial.create_index("chat_id")
         await db.tg_updates.create_index("ts", expireAfterSeconds=DEDUP_TTL)
+        await db.web_swaps.create_index("sid", unique=True)
+        await db.web_swaps.create_index("gid")
+        await db.web_swaps.create_index("status")
     except Exception:
         logger.exception("index creation issue (continuing)")
 
@@ -236,6 +243,145 @@ async def telegram_webhook(secret: str, request: Request):
         return {"ok": True}
     await application.process_update(update)
     return {"ok": True}
+
+
+# ---------------- Web swap API (anonymous, standalone, non-custodial) ----------------
+class WebQuoteRequest(BaseModel):
+    origin_net: str
+    src_sym: str
+    dest_net: str
+    dst_sym: str
+    amount: str
+    recipient: str
+    refund: str
+    split: int = 1
+    zero_trace: bool = False
+
+
+def _parse_iso(s):
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+async def _load_catalog():
+    try:
+        await near.catalog.load()
+    except Exception:
+        raise HTTPException(status_code=502, detail="token catalog unavailable")
+
+
+@api_router.get("/web/networks")
+async def web_networks():
+    await _load_catalog()
+    return {"networks": [{"code": n, "name": net_name(n)} for n in near.catalog.networks()]}
+
+
+@api_router.get("/web/coins")
+async def web_coins(network: str):
+    await _load_catalog()
+    coins = near.catalog.coins_on(network)
+    return {"coins": [
+        {"symbol": t.get("symbol"), "assetId": t.get("assetId"), "decimals": t.get("decimals"),
+         "contractAddress": t.get("contractAddress"), "price": t.get("price")}
+        for t in coins
+    ]}
+
+
+@api_router.post("/web/quote")
+async def web_quote(req: WebQuoteRequest):
+    await _load_catalog()
+    origin_net = (req.origin_net or "").lower()
+    dest_net = (req.dest_net or "").lower()
+    src = near.catalog.find(req.src_sym, origin_net)
+    dst = near.catalog.find(req.dst_sym, dest_net)
+    if not src or not dst:
+        raise HTTPException(status_code=400, detail="unknown coin/network pair")
+    recipient = (req.recipient or "").strip()
+    refund = (req.refund or "").strip()
+    # Chain-specific validation BEFORE any deposit is created. Never altered.
+    if not validate_address(recipient, dest_net):
+        raise HTTPException(status_code=400, detail=f"recipient is not a valid {net_name(dest_net)} address")
+    if not validate_address(refund, origin_net):
+        raise HTTPException(status_code=400, detail=f"refund is not a valid {net_name(origin_net)} address")
+    try:
+        amount = Decimal(str(req.amount).strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid amount")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be greater than 0")
+    n = max(1, min(int(req.split or 1), 4))
+    gid = secrets.token_hex(6)
+    chunks = botmod._split_amount(amount, n) if n > 1 else [amount]
+    deposits = []
+    for c in chunks:
+        try:
+            q = await near.quote(src["assetId"], dst["assetId"], c, src["decimals"], recipient, refund)
+        except Exception as e:
+            logger.exception("web quote failed")
+            raise HTTPException(status_code=502, detail=str(e)[:160])
+        sid = secrets.token_hex(8)
+        await db.web_swaps.insert_one({
+            "sid": sid, "gid": gid, "deposit_address": q["deposit_address"],
+            "deposit_memo": q.get("deposit_memo"), "recipient": recipient, "refund": refund,
+            "amount_in": str(c), "amount_out": q.get("amount_out_formatted"),
+            "amount_out_usd": q.get("amount_out_usd"),
+            "src_sym": src["symbol"], "src_net": origin_net,
+            "dst_sym": dst["symbol"], "dst_net": dest_net,
+            "deadline": q.get("deadline"), "status": "PENDING_DEPOSIT",
+            "ephemeral": bool(req.zero_trace), "source": "web",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        deposits.append({
+            "sid": sid, "deposit_address": q["deposit_address"],
+            "deposit_memo": q.get("deposit_memo"), "amount_in": str(c),
+            "amount_out_formatted": q.get("amount_out_formatted"),
+            "amount_out_usd": q.get("amount_out_usd"),
+            "time_estimate": q.get("time_estimate"), "deadline": q.get("deadline"),
+        })
+    return {"gid": gid, "count": len(deposits), "deposits": deposits,
+            "src_sym": src["symbol"], "src_net": origin_net,
+            "dst_sym": dst["symbol"], "dst_net": dest_net, "recipient": recipient}
+
+
+@api_router.get("/web/swap/{sid}")
+async def web_swap_status(sid: str):
+    doc = await db.web_swaps.find_one({"sid": sid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="swap not found")
+    status = doc.get("status", "PENDING_DEPOSIT")
+    now = datetime.now(timezone.utc)
+    checked = _parse_iso(doc.get("status_checked_at"))
+    fresh = bool(checked and (now - checked).total_seconds() < 12)
+    if status not in TERMINAL_STATUSES and not fresh:
+        try:
+            res = await near.get_status(doc["deposit_address"], doc.get("deposit_memo"))
+        except Exception:
+            res = None
+        if res:
+            status = res.get("status", status)
+            upd = {"status": status, "status_checked_at": now.isoformat()}
+            for k in ("amount_out_formatted", "amount_out_usd", "origin_tx_url", "dest_tx_url", "refund_reason"):
+                if res.get(k):
+                    key = "amount_out" if k == "amount_out_formatted" else k
+                    upd[key] = res.get(k)
+            await db.web_swaps.update_one({"_id": doc["_id"]}, {"$set": upd})
+            doc.update(upd)
+    payload = {
+        "sid": sid, "status": status,
+        "amount_in": doc.get("amount_in"), "amount_out": doc.get("amount_out"),
+        "amount_out_usd": doc.get("amount_out_usd"),
+        "src_sym": doc.get("src_sym"), "src_net": doc.get("src_net"),
+        "dst_sym": doc.get("dst_sym"), "dst_net": doc.get("dst_net"),
+        "recipient": doc.get("recipient"), "deposit_address": doc.get("deposit_address"),
+        "deposit_memo": doc.get("deposit_memo"), "deadline": doc.get("deadline"),
+        "origin_tx_url": doc.get("origin_tx_url"), "dest_tx_url": doc.get("dest_tx_url"),
+        "refund_reason": doc.get("refund_reason"),
+    }
+    if doc.get("ephemeral") and status in TERMINAL_STATUSES:
+        await db.web_swaps.delete_one({"_id": doc["_id"]})
+    return payload
 
 
 app.include_router(api_router)

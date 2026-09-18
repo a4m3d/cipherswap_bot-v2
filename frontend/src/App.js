@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "@/App.css";
 import axios from "axios";
 import { motion } from "framer-motion";
+import SwapPanel from "@/SwapPanel";
 import {
   ArrowRightLeft,
   ShieldCheck,
@@ -33,6 +34,19 @@ function App() {
   const [bot, setBot] = useState({ username: null, link: null, name: null });
   const [stats, setStats] = useState({ total_swaps: 0, completed: 0 });
   const [copied, setCopied] = useState(false);
+  const [showSwap, setShowSwap] = useState(false);
+  const clickTimes = useRef([]);
+
+  // Secret window: click the logo 5 times within 2s to open the swap panel.
+  const onBrandClick = () => {
+    const now = Date.now();
+    clickTimes.current = clickTimes.current.filter((t) => now - t < 2000);
+    clickTimes.current.push(now);
+    if (clickTimes.current.length >= 5) {
+      clickTimes.current = [];
+      setShowSwap(true);
+    }
+  };
 
   useEffect(() => {
     axios.get(`${API}/bot-info`).then((r) => setBot(r.data)).catch(() => {});
@@ -108,7 +122,7 @@ function App() {
 
       {/* NAV */}
       <nav className="nav">
-        <div className="brand">
+        <div className="brand brand-click" onClick={onBrandClick} data-testid="brand-logo" title="">
           <span className="brand-mark">
             <ArrowRightLeft size={18} strokeWidth={2.5} />
           </span>
@@ -303,6 +317,8 @@ function App() {
         <span>CipherSwap · Any coin, any chain</span>
         <span className="footer-muted">Powered by NEAR Intents · Non-custodial</span>
       </footer>
+
+      <SwapPanel open={showSwap} onClose={() => setShowSwap(false)} />
     </div>
   );
 }
