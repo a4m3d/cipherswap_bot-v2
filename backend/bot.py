@@ -959,10 +959,17 @@ async def _start_custodial(context, chat_id, route, amount, n, ephemeral):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     link = _payment_link(route["origin_contract"], route["origin_net"], address, amount, route["origin_decimals"])
+    sym = evm.NATIVE_SYMBOL.get(route["origin_net"], "native token")
+    try:
+        needed_wei = await asyncio.to_thread(evm.required_gas_wei, route["origin_net"], n)
+        needed_eth = Decimal(needed_wei) / Decimal(10 ** 18)
+        gas_line = f"➕ Also send *at least ~{needed_eth:.6f} {sym}* for gas so I can forward all {n} chunk(s)."
+    except Exception:
+        gas_line = "➕ Also send enough *native gas* to cover all chunk transfers."
     cap = (f"🧩 *Pay-once split (custodial)* — {n} chunks\n\n"
            f"Send *{amount} {route['src_sym']}* on *{net_name(route['origin_net'])}* to your one-time wallet:\n`{address}`\n\n"
-           f"➕ Also send a little *native gas* (e.g. ETH) to it so I can forward the chunks.\n\n"
-           f"When funded, I auto-split into {n} random chunks (each a fresh route) → {route['dst_sym']} on {net_name(route['dest_net'])}.")
+           f"{gas_line}\n\n"
+           f"When funded (tokens + enough gas), I auto-split into {n} random chunks (each a fresh route) → {route['dst_sym']} on {net_name(route['dest_net'])}.")
     await _send_card(context.bot, chat_id, link, cap, "custodial")
     await _safe_send(context.bot, chat_id,
         "🔑 *RECOVERY KEY* — save this now. If anything gets stuck, import it into any wallet to recover funds:\n"
@@ -981,15 +988,18 @@ async def _custodial_loop(app):
                     net = j["network"]
                     bal = await asyncio.to_thread(evm.erc20_balance, net, j["token_addr"], j["decimals"], j["address"])
                     gas = await asyncio.to_thread(evm.native_balance, net, j["address"])
-                    if bal < Decimal(j["total"]) or gas <= 0:
+                    required_wei = await asyncio.to_thread(evm.required_gas_wei, net, len(j["chunks"]))
+                    required_eth = Decimal(required_wei) / Decimal(10 ** 18)
+                    sym = evm.NATIVE_SYMBOL.get(net, "native token")
+                    if bal < Decimal(j["total"]) or gas < required_eth:
                         created = _parse_dt(j.get("created_at"))
                         if (created and (now - created).total_seconds() > 1800 and not j.get("reminded")):
                             await db.custodial.update_one({"_id": j["_id"]}, {"$set": {"reminded": True}})
                             need = []
                             if bal < Decimal(j["total"]):
                                 need.append(f"*{j['total']} {j['route']['src_sym']}*")
-                            if gas <= 0:
-                                need.append("a little *native gas*")
+                            if gas < required_eth:
+                                need.append(f"*at least ~{required_eth:.6f} {sym}* for gas (you sent {gas:.6f})")
                             await _safe_send(app.bot, j["chat_id"],
                                 f"⏳ Your pay-once wallet `{_short(j['address'])}` still needs {' + '.join(need)}.\n"
                                 "It stays valid — send when ready, or use your 🔑 recovery key to move funds anytime.",

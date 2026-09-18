@@ -74,6 +74,35 @@ def erc20_balance(network, token_addr, decimals, address) -> Decimal:
     return Decimal(raw) / (Decimal(10) ** decimals)
 
 
+# Native gas token per supported EVM origin (for user-facing messages)
+NATIVE_SYMBOL = {
+    "base": "ETH", "eth": "ETH", "arb": "ETH", "op": "ETH",
+    "scroll": "ETH", "gnosis": "xDAI", "bsc": "BNB", "pol": "POL", "avax": "AVAX",
+}
+
+# Conservative per-transfer gas limit used when an on-chain estimate is unavailable.
+ERC20_GAS_LIMIT = 120000
+
+
+def gas_price_wei(network) -> int:
+    """Effective max fee per gas (wei) matching send_erc20's fee policy."""
+    w3 = _w3(network)
+    try:
+        base_fee = w3.eth.get_block("latest").get("baseFeePerGas")
+    except Exception:
+        base_fee = None
+    if base_fee:
+        return int(base_fee * 2 + w3.to_wei(1, "gwei"))
+    return w3.eth.gas_price
+
+
+def required_gas_wei(network, n_txs: int) -> int:
+    """Native-gas budget (wei) sufficient for n_txs ERC-20 transfers, with buffer."""
+    n_txs = max(1, int(n_txs))
+    per_tx = ERC20_GAS_LIMIT * gas_price_wei(network)
+    return int(per_tx * n_txs * 1.25)
+
+
 def native_balance(network, address) -> Decimal:
     w3 = _w3(network)
     return Decimal(w3.eth.get_balance(Web3.to_checksum_address(address))) / Decimal(10 ** 18)
