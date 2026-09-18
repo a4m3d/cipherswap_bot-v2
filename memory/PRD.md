@@ -22,6 +22,7 @@ Full security audit (crypto/wallet app). NOT to be deployed on Emergent.
 - crypto.py + bot.py: custodial private keys encrypted at rest (WALLET_ENCRYPTION_KEY); Pay-once Split RETAINED.
 - addr_validate.py: chain-specific recipient/refund validation (eth-utils/base58/bech32) wired into bot.py.
 - Custodial dispatch hardened: atomic {dispatched:false}->true claim (no double payout), sid entropy 8 bytes.
+- Dynamic gas budget fix for Pay-once Split: requires full gas budget across all chunks before dispatch, displays exact native gas needed on deposit card, and prevents on-chain -32003 failure.
 - evm.py: pending-nonce fix for multi-chunk dispatch.
 - Trimmed requirements.txt (removed Emergent/unused deps); added job-queue, base58, bech32.
 - Frontend rebranded to CipherSwap "any coin, any chain"; removed Emergent dev deps.
