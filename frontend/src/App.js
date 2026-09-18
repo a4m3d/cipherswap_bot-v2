@@ -39,8 +39,8 @@ function App() {
     axios.get(`${API}/stats`).then((r) => setStats(r.data)).catch(() => {});
   }, []);
 
-  const botLink = bot.link || "https://t.me";
-  const botHandle = bot.username ? `@${bot.username}` : "@your_bot";
+  const botLink = bot.link || "https://t.me/cipherswap_bot";
+  const botHandle = bot.username ? `@${bot.username}` : "@cipherswap_bot";
   const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=1&bgcolor=0C1017&color=FFFFFF&data=${encodeURIComponent(
     botLink
   )}`;
