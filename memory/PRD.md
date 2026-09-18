@@ -19,18 +19,22 @@ Full security audit (crypto/wallet app). NOT to be deployed on Emergent.
 - Rebuilt server.py: /api/health, CORS fix, required webhook secret (path + header), leader lock
   (single poller/custodial dispatcher), update-id dedup, startup indexes, global error handler.
 - near_client.py: call-time env config, timeout/429/4xx/5xx/malformed handling, no secret logging.
-- crypto.py + bot.py: custodial private keys encrypted at rest (WALLET_ENCRYPTION_KEY).
+- crypto.py + bot.py: custodial private keys encrypted at rest (WALLET_ENCRYPTION_KEY); Pay-once Split RETAINED.
+- addr_validate.py: chain-specific recipient/refund validation (eth-utils/base58/bech32) wired into bot.py.
+- Custodial dispatch hardened: atomic {dispatched:false}->true claim (no double payout), sid entropy 8 bytes.
 - evm.py: pending-nonce fix for multi-chunk dispatch.
-- Trimmed requirements.txt (removed Emergent/unused deps); added job-queue extra.
+- Trimmed requirements.txt (removed Emergent/unused deps); added job-queue, base58, bech32.
 - Frontend rebranded to CipherSwap "any coin, any chain"; removed Emergent dev deps.
 - Added render.yaml, runtime.txt, vercel.json, backend/.env.example, frontend/.env.example, DEPLOYMENT.md.
-- Verified locally: backend imports/starts, /api/health|stats|bot-info, webhook auth gate,
-  encryption roundtrip, frontend production build, no secrets in bundle/repo.
+- Verified locally: imports/start, /api/health|stats|bot-info, webhook auth gate, encryption roundtrip,
+  address validators (real valid accepted / invalid rejected), CORS allow+block, frontend build, no secrets
+  in bundle/repo/git-history.
+- Rate limiting intentionally NOT added (per user instruction).
 
 ## Residual items requiring human decision (see DEPLOYMENT.md §C)
-- Custodial hot-wallet trust model / key management (KMS?).
-- Per-chain recipient address validation (currently length-only).
-- Rate limiting / abuse controls.
+- Custodial hot-wallet trust model: encryption ≠ protection against full server compromise; future KMS/HSM.
+- Delayed split reminders are in-memory (lost on restart; no funds moved).
+- Amount precision quantized to 2 decimals.
 
 ## Not testable without prod creds
 - Live Telegram webhook round-trip, real NEAR quote/status, real custodial transfer, Atlas connectivity.

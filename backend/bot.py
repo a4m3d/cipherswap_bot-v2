@@ -23,6 +23,7 @@ from telegram.ext import (
     ConversationHandler, MessageHandler, filters,
 )
 
+import addr_validate
 import crypto
 import evm
 import nlp
@@ -632,10 +633,6 @@ async def cb_blend(update, context):
 
 
 # ---------------- recipient / refund ----------------
-def _valid_addr(a):
-    return a and " " not in a and 20 <= len(a) <= 120
-
-
 async def _ask_recipient(update, context, q=None):
     r = context.user_data["route"]
     chat_id = update.effective_chat.id
@@ -676,10 +673,13 @@ async def cb_recipient(update, context):
 
 async def recipient_text(update, context):
     addr = (update.message.text or "").strip()
-    if not _valid_addr(addr):
-        await _safe_reply(update, "⚠️ That doesn't look like a valid address. Try again.")
-        return US_RECIPIENT_TEXT
     r = context.user_data["route"]
+    if not addr_validate.validate_address(addr, r["dest_net"]):
+        await _safe_reply(update,
+            f"⚠️ That doesn't look like a valid *{net_name(r['dest_net'])}* address. "
+            "Please double-check the network and address, then send it again.",
+            parse_mode=ParseMode.MARKDOWN)
+        return US_RECIPIENT_TEXT
     context.user_data["recipient"] = addr
     await _save_addr(_db(context), update.effective_chat.id, r["dest_net"], addr)
     return await _goto(update, context, "refund")
@@ -720,10 +720,13 @@ async def cb_refund(update, context):
 
 async def refund_text(update, context):
     addr = (update.message.text or "").strip()
-    if not _valid_addr(addr):
-        await _safe_reply(update, "⚠️ That doesn't look like a valid address. Try again.")
-        return US_REFUND_TEXT
     r = context.user_data["route"]
+    if not addr_validate.validate_address(addr, r["origin_net"]):
+        await _safe_reply(update,
+            f"⚠️ That doesn't look like a valid *{net_name(r['origin_net'])}* address. "
+            "Please double-check the network and address, then send it again.",
+            parse_mode=ParseMode.MARKDOWN)
+        return US_REFUND_TEXT
     context.user_data["refund"] = addr
     await _save_addr(_db(context), update.effective_chat.id, r["origin_net"], addr)
     return await _goto(update, context, "privacy")
@@ -849,7 +852,7 @@ async def _create_and_send(bot, db, near, chat_id, route, amount, recipient, ref
         return
     deposit = q["deposit_address"]
     link = _payment_link(route.get("origin_contract"), route["origin_net"], deposit, amount, route["origin_decimals"])
-    sid = secrets.token_hex(4)
+    sid = secrets.token_hex(8)
     await db.swaps.insert_one({
         "sid": sid, "gid": gid, "chat_id": chat_id,
         "deposit_address": deposit, "deposit_memo": q.get("deposit_memo"),
@@ -992,7 +995,10 @@ async def _custodial_loop(app):
                                 "It stays valid — send when ready, or use your 🔑 recovery key to move funds anytime.",
                                 parse_mode=ParseMode.MARKDOWN)
                         continue
-                    await db.custodial.update_one({"_id": j["_id"]}, {"$set": {"dispatched": True}})
+                    claimed = await db.custodial.update_one(
+                        {"_id": j["_id"], "dispatched": False}, {"$set": {"dispatched": True}})
+                    if claimed.modified_count != 1:
+                        continue  # already claimed by another pass — never dispatch twice
                     await _safe_send(app.bot, j["chat_id"],
                         f"💰 Received {j['total']} {j['route']['src_sym']} + gas. Splitting into {len(j['chunks'])} chunks now…")
                     for idx, amt in enumerate(j["chunks"], start=1):
@@ -1004,7 +1010,7 @@ async def _custodial_loop(app):
                                                          j["token_addr"],
                                                          j["decimals"], q["deposit_address"], amt)
                             await db.swaps.insert_one({
-                                "sid": secrets.token_hex(4), "gid": str(j["_id"]), "chat_id": j["chat_id"],
+                                "sid": secrets.token_hex(8), "gid": str(j["_id"]), "chat_id": j["chat_id"],
                                 "deposit_address": q["deposit_address"], "deposit_memo": q.get("deposit_memo"),
                                 "recipient": j["recipient"], "refund": j["address"],
                                 "amount_in": amt, "amount_out": q.get("amount_out_formatted"),

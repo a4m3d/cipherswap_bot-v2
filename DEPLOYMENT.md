@@ -27,7 +27,8 @@ GitHub
   - `PUBLIC_BASE_URL` trailing slash normalized.
 - `near_client.py`: config (`NEAR_INTENTS_BASE`, `NEAR_INTENTS_JWT`) read at call time; timeouts, network errors, HTTP 429/4xx/5xx and malformed JSON handled and converted to safe user messages; upstream error bodies logged server-side only, never returned to users; JWT never logged.
 - `crypto.py` (new): custodial hot-wallet private keys are encrypted at rest with Fernet using `WALLET_ENCRYPTION_KEY`.
-- `bot.py`: custodial wallet private key is stored **encrypted** (`pk_enc`) instead of plaintext; decrypted only in-memory at dispatch time; feature auto-disables (with a friendly message) if `WALLET_ENCRYPTION_KEY` is missing. User still receives their own plaintext recovery key in Telegram.
+- `bot.py`: custodial wallet private key is stored **encrypted** (`pk_enc`) instead of plaintext; decrypted only in-memory at dispatch time; feature stays enabled and only guards against running without `WALLET_ENCRYPTION_KEY` configured. User still receives their own plaintext recovery key in Telegram. Custodial dispatch now uses an **atomic compare-and-swap claim** (`{dispatched:false}→true`) so a chunk batch can never be dispatched twice; swap ids widened to 8 bytes (unique index).
+- `addr_validate.py` (new): **chain-specific recipient/refund address validation** using established primitives (eth-utils EVM checksum, base58 Base58Check, bech32 SegWit/bech32). Strict validators for EVM, Starknet/Move, Solana, Bitcoin/LTC/DOGE/DASH/BCH/ZEC, Tron, XRP, NEAR, TON, Stellar, Cardano; conservative fallback for long-tail chains. Wired into `bot.py` recipient and refund entry (the only places a raw address enters the system) — runs BEFORE any swap/split is created, never alters an address, and a failed validation never triggers a transaction.
 - `evm.py`: ERC-20 transfer now uses the `pending` nonce to avoid nonce collisions when dispatching multiple split chunks quickly.
 - `requirements.txt`: trimmed to only what the app imports; removed unused/Emergent-specific packages (`emergentintegrations`, Emergent-hosted `litellm` wheel, boto3, stripe, google, pandas, numpy, openai, etc.). Added `[job-queue]` extra needed by the bot.
 
@@ -53,11 +54,11 @@ GitHub
 ---
 
 ## C. Security issues that still require YOUR attention
-1. **Custodial model is inherently trust-bearing.** During a "Pay-once split", the backend briefly holds user funds in a server-generated hot wallet and the private key exists (encrypted) in your DB and (plaintext) in the user's Telegram chat as a recovery key. Encryption protects a DB dump, **but** anyone with both the DB and `WALLET_ENCRYPTION_KEY` (e.g. full server compromise) can move in-flight custodial funds. Decide whether to keep this feature in production. Store `WALLET_ENCRYPTION_KEY` only in Render (never in Git), and consider a dedicated secret manager / KMS for higher assurance.
-2. **Recipient/refund address validation is minimal** (`bot.py._valid_addr`: length + no-spaces only). It does **not** verify the address matches the destination chain's format. A user pasting a wrong-chain or malformed address could send funds to an unintended destination. Recommend adding per-chain address validation before go-live. (Not changed automatically — it's a product decision and a larger change.)
-3. **No per-user rate limiting / abuse controls** on the bot or the public `/api/stats`. Consider basic limits before a public launch.
-4. **Delayed split reminders** use an in-memory job queue; they are lost on restart/redeploy (no funds are moved by these jobs — they only send deposit cards). Acceptable, but note it.
-5. **Amount precision**: split math quantizes to 2 decimals; fine for USDC/USDT-style tokens but review if you enable tokens with very different precision.
+1. **Custodial model is inherently trust-bearing (threat model).** During a "Pay-once split" the backend briefly holds user funds in a server-generated hot wallet. The private key is stored **encrypted** in MongoDB and also given to the user in Telegram as a plaintext recovery key. **Encrypting the DB protects against a database dump only — it does NOT protect custodial funds against a full server compromise**, because an attacker with both the database and the `WALLET_ENCRYPTION_KEY` (e.g. code execution on the backend) can decrypt and move in-flight custodial funds. This is an inherent property of any hot-wallet custody and is **not** removed by encryption. Pay-once Split is intentionally retained. **Future security enhancement (not silently added):** move signing/key custody to a KMS/HSM or an isolated signer service so raw keys never live in the app process or DB. Keep `WALLET_ENCRYPTION_KEY` only in Render env, never in Git.
+2. **Delayed split reminders** use an in-memory job queue; they are lost on restart/redeploy (no funds are moved by these jobs — they only send deposit cards). Acceptable, but be aware.
+3. **Amount precision**: split math quantizes to 2 decimals; fine for USDC/USDT-style tokens but review if you enable tokens with very different precision.
+
+> Recipient/refund **address validation is now implemented** (chain-specific, see §A). Rate limiting / abuse controls were intentionally **not** added, per your instruction.
 
 ---
 
@@ -159,6 +160,19 @@ curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"  # url + pending_updat
 - **Recommended before a real public launch** (product decisions, not done automatically): per-chain recipient address validation (C.2), a decision on keeping the custodial feature (C.1), and basic rate limiting (C.3).
 
 ---
+
+## Live testing checklist (after external deploy)
+- [ ] `GET /api/health` → `{"status":"ok"}` on the Render URL.
+- [ ] `GET /api/bot-info` returns the bot username/link; frontend QR/link work.
+- [ ] Vercel frontend loads and calls the Render API (no CORS errors in console).
+- [ ] `getWebhookInfo` shows your Render webhook URL and `pending_update_count` draining.
+- [ ] Bot `/start` responds; the swap wizard advances through all steps.
+- [ ] Quote step returns a deposit address (NEAR/1Click reachable).
+- [ ] Recipient/refund validation: a wrong-chain/malformed address is rejected; a correct address is accepted.
+- [ ] Status poller updates a swap (PENDING → DEPOSIT/PROCESSING → SUCCESS) and notifies the user.
+- [ ] Pay-once Split: a custodial wallet is created, funding is detected, chunks dispatch exactly once (check `db.custodial.dispatched` and that no chunk is sent twice).
+- [ ] Restart the Render service mid-swap → no duplicate dispatch, poller resumes on the (single) leader.
+- [ ] Confirm logs contain no token/JWT/private-key/Mongo-URL values.
 
 ## What could NOT be tested here (needs your production credentials)
 - Live Telegram webhook round-trip and `set_webhook` (needs a real `TELEGRAM_TOKEN` + public HTTPS URL). Verified locally: webhook auth gate (403/503), update de-dup, and startup wiring.

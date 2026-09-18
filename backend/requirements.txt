@@ -9,4 +9,6 @@ qrcode==8.2
 pillow==12.3.0
 web3==8.0.0
 eth-account==0.14.0
+base58==2.1.1
+bech32==1.2.0
 cryptography==50.0.1
