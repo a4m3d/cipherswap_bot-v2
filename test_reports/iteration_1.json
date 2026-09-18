@@ -1,0 +1,23 @@
+{
+  "summary": "Full backend + frontend test of CipherSwap Secret Swap (web) flow. 12/12 backend pytest cases pass for /api/health, /api/web/networks, /api/web/coins, /api/web/resolve-ca, /api/web/quote (validation + happy path + split), /api/web/swap/{sid}. Frontend E2E via Playwright: landing loads with hero/steps/bento/privacy/footer, all three Telegram CTAs link to https://t.me/cipherswap_bot, 5-quick-click on brand-logo opens Secret Swap modal, defaults are Base -> Starknet, coin dropdowns populate (19 base coins, 4 starknet), CA toggle reveals input; valid Base USDC CA resolves to 'Matched USDC', invalid 0xdeadbeef returns 'No swappable token...' error, invalid Starknet recipient returns 'recipient is not a valid Starknet address' and no deposit is created, valid happy-path returns a deposit card with QR, amount_out (~145 STRK), copyable address, and animated 'Waiting for deposit' badge (correct per spec since no real deposit sent), polling fires 2 GET /api/web/swap/{sid} requests in ~11s (5s interval, no crash), privacy toggles all work (Blend on-class applied, Split cycles off->x2->x3->x4->off, Zero-Trace on-class applied). No console errors other than expected 404/400 from invalid CA / recipient tests.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_web_swap.py",
+    "/app/test_reports/pytest/web_swap.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SwapPanel.jsx poll effect keys on result?.gid but relies on setResult inside tick which will always re-render; interval is correctly cleared on unmount/gid change so safe.",
+    "backend web_swap_status uses find_one then update; races are benign but consider $set with returnDocument.AFTER for atomicity.",
+    "Global exception handler returns generic 500; good, but HTTPException still bubbles up (correct). No PII leaked."
+  ],
+  "updated_files": ["/app/backend/tests/test_web_swap.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all specified flows verified)"},
+  "test_credentials": "none - anonymous flow",
+  "seed_data_creation": "web_swaps documents are inserted by /api/web/quote calls during testing (real 1Click reservations, no funds required); left in place as agent-to-agent context notes it is fine.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests require REACT_APP_BACKEND_URL env var - run with `REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) pytest backend/tests/test_web_swap.py -v -o addopts=`. The /app/backend/pytest.ini has -n auto in addopts which needs to be overridden if pytest-xdist trips. Bot username is null (no TELEGRAM_TOKEN) which is expected per spec — so the pre-existing backend_test.py TestEndpoints.test_bot_info that asserts username=='swaswabotbot' will fail; that entire legacy suite is Telegram-bot dependent and out of scope for this review. Status stays at 'Waiting for deposit' because no funds are sent — expected, not a bug.",
+  "rca of the issue": "N/A - no bugs found in the current scope (Secret Swap panel realtime updates, redesigned landing, CA swap). The originally reported 'not updating realtime' bug is verified fixed: polling correctly fires every 5s and status badge is rendered via AnimatePresence keyed on dep.status so any status change would animate in."
+}

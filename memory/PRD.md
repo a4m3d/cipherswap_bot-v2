@@ -32,8 +32,15 @@ Full security audit (crypto/wallet app). NOT to be deployed on Emergent.
   in bundle/repo/git-history.
 - Rate limiting intentionally NOT added (per user instruction).
 - Anonymous web swap UI (2026-06): /api/web/{networks,coins,quote,swap/<sid>} (non-custodial,
-  reuses NEAR client/catalog; chain-specific address validation; split/blend/zero-trace; 12s status cache).
+  reuses NEAR client/catalog; chain-specific address validation; split/blend/zero-trace; 5s status cache).
   Frontend SwapPanel.jsx opened by clicking the logo 5x in 2s. Verified E2E vs live 1Click.
+- Gas budget fix for Pay-once Split (custodial): requires full gas across all chunks before dispatch.
+- Paymaster (opt-in, off by default): GAS_RESERVE_PK operator EVM wallet tops up one-time custodial
+  wallets so users never send gas (evm.has_reserve/topup_gas; custodial loop tops up shortfall).
+- CA (contract-address) swaps: /api/web/resolve-ca + Catalog.find_by_ca; TG bot accepts pasted CA in
+  the src/dst coin steps (us_src_coin_text / us_dst_coin_text).
+- Frontend redesign (design_agent): Cabinet Grotesk/Satoshi/JetBrains Mono, asymmetric hero, process
+  rail, bento features, smooth Framer Motion realtime status badges. testing_agent iteration_1: 100% pass.
 
 ## Residual items requiring human decision (see DEPLOYMENT.md §C)
 - Custodial hot-wallet trust model: encryption ≠ protection against full server compromise; future KMS/HSM.
