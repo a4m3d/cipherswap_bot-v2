@@ -31,6 +31,9 @@ Full security audit (crypto/wallet app). NOT to be deployed on Emergent.
   address validators (real valid accepted / invalid rejected), CORS allow+block, frontend build, no secrets
   in bundle/repo/git-history.
 - Rate limiting intentionally NOT added (per user instruction).
+- Anonymous web swap UI (2026-06): /api/web/{networks,coins,quote,swap/<sid>} (non-custodial,
+  reuses NEAR client/catalog; chain-specific address validation; split/blend/zero-trace; 12s status cache).
+  Frontend SwapPanel.jsx opened by clicking the logo 5x in 2s. Verified E2E vs live 1Click.
 
 ## Residual items requiring human decision (see DEPLOYMENT.md §C)
 - Custodial hot-wallet trust model: encryption ≠ protection against full server compromise; future KMS/HSM.
